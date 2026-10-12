@@ -20,8 +20,9 @@ Fork of [oldhame/NitroPerks](https://github.com/oldhame/NitroPerks) by **lemons*
 | **Nitro Emotes Bypass** | Emotes you can't really use (from other servers, animated) are sent as image links that Discord shows as pictures. Emotes you can use normally stay untouched. Works when editing messages too. |
 | **Emote Size** | Size of the linked emote image: 32 / 48 / 64 / 96 / 128 px. |
 | **Clientsided Profile Picture** | Replaces your avatar with any image link. Only you see it. |
+| **Stream FPS** *(experimental)* | When you pick 60 fps for a stream, sends 90 / 120 / 144 / 165 / 240 fps to the encoder instead. Restart the stream to apply. Discord's servers may still cap the stream at 60 — check the real FPS on the viewer's side. |
 
-If your account already has Nitro, the plugin doesn't change anything.
+If your account already has Nitro, the plugin doesn't change anything (except Stream FPS, which works for everyone).
 
 ### Installation
 
@@ -75,8 +76,9 @@ Delete `NitroPerks.plugin.js` from the plugins folder. To remove BetterDiscord, 
 | **Nitro Emotes Bypass** | Эмодзи, которые вам на самом деле недоступны (с других серверов, анимированные), отправляются ссылками на картинку, и Discord показывает их как изображения. Доступные эмодзи отправляются как обычно. Работает и при редактировании сообщений. |
 | **Emote Size** | Размер картинки эмодзи: 32 / 48 / 64 / 96 / 128 px. |
 | **Clientsided Profile Picture** | Заменяет вашу аватарку на любую картинку по ссылке. Видите её только вы. |
+| **Stream FPS** *(экспериментально)* | Когда вы выбираете для стрима 60 fps, кодировщик вместо этого получает 90 / 120 / 144 / 165 / 240 fps. Чтобы применить, перезапустите стрим. Серверы Discord могут всё равно ограничить стрим до 60 — проверяйте реальную частоту кадров у зрителя. |
 
-Если у аккаунта уже есть Nitro, плагин ничего не меняет.
+Если у аккаунта уже есть Nitro, плагин ничего не меняет (кроме Stream FPS — эта функция работает у всех).
 
 ### Установка
 

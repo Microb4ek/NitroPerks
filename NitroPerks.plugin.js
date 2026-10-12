@@ -2,7 +2,7 @@
  * @name NitroPerks
  * @author Microb4ek, lemons
  * @authorLink https://github.com/Microb4ek
- * @version 2.0.0
+ * @version 2.1.0
  * @description Unlock all screensharing modes, and use cross-server emotes & gif emotes, Discord wide! (You CANNOT upload 100MB files though. :/)
  * @website https://github.com/Microb4ek/NitroPerks
  * @source https://raw.githubusercontent.com/Microb4ek/NitroPerks/main/NitroPerks.plugin.js
@@ -40,15 +40,20 @@
 //    because Discord replaces that record on every USER_UPDATE).
 //  * Emotes the account can't really use are swapped for CDN links in MessageActions._sendMessage / editMessage.
 //  * The clientside avatar hooks the avatar URL helpers instead of rewriting <img src> in a 100ms loop.
+//  * Experimental stream FPS: Discord's picker stops at 60, but the native connection's setGoLiveSource
+//    passes quality.frameRate straight to the encoder (setDesktopEncodingOptions) and to the stream's
+//    maxFrameRate, so we swap 60 for the chosen value there. The media server may still cap it.
 
 const PREMIUM_TIER_2 = 2;
+const PICKER_MAX_FPS = 60;
 
 const DEFAULT_SETTINGS = {
     spoofNitro: true,
     emojiBypass: true,
     emojiSize: 48,
     clientsidePfp: false,
-    pfpUrl: ""
+    pfpUrl: "",
+    streamFps: 0 // 0 = leave Discord's value
 };
 
 const isValidUrl = value => {
@@ -78,6 +83,7 @@ module.exports = class NitroPerks {
         this.EmojiStore = Webpack.getStore("EmojiStore");
         this.MessageActions = byKeys("_sendMessage", "editMessage", "sendMessage");
         this.AvatarUtils = byKeys("getUserAvatarURL", "getGuildMemberAvatarURLSimple");
+        this.MediaEngineStore = Webpack.getStore("MediaEngineStore");
 
         const missing = ["UserStore", "ChannelStore", "MessageActions", "AvatarUtils"].filter(name => !this[name]);
         if (missing.length) {
@@ -111,6 +117,19 @@ module.exports = class NitroPerks {
             }
         }
 
+        if (this.settings.streamFps > 0) {
+            // The connection class isn't exported: patch its prototype through the engine instead,
+            // on connections that already exist and on every new one from engine.connect().
+            const engine = this.MediaEngineStore?.getMediaEngine?.();
+            if (engine?.connect) {
+                this.patchedConnections = new WeakSet();
+                engine.eachConnection?.(conn => this.patchConnection(conn));
+                Patcher.after(engine, "connect", (_, __, conn) => this.patchConnection(conn));
+            } else {
+                this.api.UI.showToast("NitroPerks: media engine not found, custom stream FPS is off.", {type: "error"});
+            }
+        }
+
         if (this.settings.emojiBypass && this.MessageActions) {
             // _sendMessage(channelId, {content, validNonShortcutEmojis, invalidEmojis, tts}, options)
             Patcher.before(this.MessageActions, "_sendMessage", (_, [channelId, message]) => {
@@ -140,6 +159,18 @@ module.exports = class NitroPerks {
             patch("getGuildMemberAvatarURL", member => member?.userId);
             patch("getGuildMemberAvatarSource", member => member?.userId, u => ({uri: u}));
         }
+    }
+
+    patchConnection(conn) {
+        const proto = conn && Object.getPrototypeOf(conn);
+        if (!proto || typeof proto.setGoLiveSource !== "function" || this.patchedConnections.has(proto)) return;
+        this.patchedConnections.add(proto);
+        // setGoLiveSource({desktopDescription | cameraDescription, quality: {resolution, frameRate}})
+        this.api.Patcher.before(proto, "setGoLiveSource", (_, args) => {
+            const quality = args[0]?.quality;
+            if (quality?.frameRate !== PICKER_MAX_FPS) return; // only when 60 was picked
+            args[0] = {...args[0], quality: {...quality, frameRate: this.settings.streamFps}};
+        });
     }
 
     spoofUser(user) {
@@ -200,6 +231,8 @@ module.exports = class NitroPerks {
                 {type: "switch", id: "emojiBypass", name: "Nitro Emotes Bypass", note: "Sends emotes you can't use as image links.", value: this.settings.emojiBypass},
                 {type: "dropdown", id: "emojiSize", name: "Emote Size", note: "Size of the linked emote image.", value: this.settings.emojiSize,
                     options: [32, 48, 64, 96, 128].map(n => ({label: `${n}px`, value: n}))},
+                {type: "dropdown", id: "streamFps", name: "Stream FPS (experimental)", note: "Replaces 60 fps when you pick 60 in the stream settings. Restart the stream to apply. Discord's servers may still cap it at 60.", value: this.settings.streamFps,
+                    options: [{label: "Discord default", value: 0}, ...[90, 120, 144, 165, 240].map(n => ({label: `${n} fps`, value: n}))]},
                 {type: "switch", id: "clientsidePfp", name: "Clientsided Profile Picture", note: "Only you see it.", value: this.settings.clientsidePfp},
                 {type: "text", id: "pfpUrl", name: "Profile Picture URL", note: "Direct http(s) link to an image. Applied once the link is valid.", value: this.settings.pfpUrl, placeholder: "https://..."}
             ],
