@@ -2,7 +2,7 @@
  * @name NitroPerks
  * @author Microb4ek, lemons
  * @authorLink https://github.com/Microb4ek
- * @version 2.2.0
+ * @version 2.2.1
  * @description Unlock all screensharing modes, use cross-server emotes & gif emotes Discord wide, and share a custom avatar and profile banner with other NitroPerks users! (You CANNOT upload 100MB files though. :/)
  * @website https://github.com/Microb4ek/NitroPerks
  * @source https://raw.githubusercontent.com/Microb4ek/NitroPerks/main/NitroPerks.plugin.js
@@ -153,6 +153,13 @@ const STRINGS = {
         stripped: "Discord removed the hidden code from your About Me, sharing doesn't work right now.",
         saveFailed: "Couldn't save About Me: ",
         tooLong: "About Me is too long for the code. Shorten it or use a shorter link (e.g. i.imgur.com).",
+        paste: "Paste",
+        clear: "Clear",
+        checking: "Checking the image…",
+        imageOk: "✓ Image loads ({0}×{1})",
+        imageBad: "✗ No image at this link. You need a direct link to the picture itself (usually ends with .png, .jpg or .gif), e.g. https://i.imgur.com/abc.png, not a page like imgur.com/abc.",
+        notLink: "✗ This is not a link. It should start with https://",
+        discordLink: "⚠ The image loads, but this is a Discord attachment link: it stops working on {0} and is too long to share with other users. Upload the image to imgur.com and use the direct link (i.imgur.com/….gif).",
         missing: "NitroPerks: Discord modules not found ({0}), some features are off.",
         noEngine: "NitroPerks: media engine not found, custom stream FPS is off."
     },
@@ -176,6 +183,13 @@ const STRINGS = {
         stripped: "Discord удалил скрытый код из «Обо мне», делиться аватаркой сейчас не получится.",
         saveFailed: "Не удалось сохранить «Обо мне»: ",
         tooLong: "В «Обо мне» не хватает места для кода. Сократите текст или возьмите ссылку покороче (например, i.imgur.com).",
+        paste: "Вставить",
+        clear: "Очистить",
+        checking: "Проверяю картинку…",
+        imageOk: "✓ Картинка загружается ({0}×{1})",
+        imageBad: "✗ По ссылке нет картинки. Нужна прямая ссылка на саму картинку (обычно заканчивается на .png, .jpg или .gif), например https://i.imgur.com/abc.png, а не на страницу вроде imgur.com/abc.",
+        notLink: "✗ Это не ссылка. Она должна начинаться с https://",
+        discordLink: "⚠ Картинка загружается, но это ссылка на вложение Discord: она перестанет работать {0} и слишком длинная, чтобы поделиться ею с другими. Загрузите картинку на imgur.com и возьмите прямую ссылку (i.imgur.com/….gif).",
         missing: "NitroPerks: не найдены модули Discord ({0}), часть функций отключена.",
         noEngine: "NitroPerks: не найден медиадвижок, своя частота кадров стрима отключена."
     }
@@ -198,7 +212,45 @@ module.exports = class NitroPerks {
         const {Webpack} = this.api;
         const filter = Webpack.Filters.byKeys ?? Webpack.Filters.byProps;
         const byKeys = (...keys) => Webpack.getModule(filter(...keys), {searchExports: true});
-        const byStrings = (...strings) => Webpack.Filters.byStrings && Webpack.getModule(Webpack.Filters.byStrings(...strings), {searchExports: true});
+        // Exported functions are found by their source, in one pass over all modules (own filter instead of
+        // Filters.byStrings, which didn't find getDisplayProfile on the live client).
+        const wanted = {
+            fetchProfile: ["USER_PROFILE_FETCH_START", "USER_PROFILE_FETCH_SUCCESS"],
+            saveProfile: ["USER_PROFILE_UPDATE_START", "USER_PROFILE_UPDATE_SUCCESS"],
+            getDisplayProfile: [".getUserProfile(", ".getGuildMemberProfile(", "arguments[2]"]
+        };
+        const candidates = {};
+        Webpack.getModule(m => {
+            if (typeof m !== "function") return false;
+            let source;
+            try {
+                source = String(m);
+            } catch {
+                return false;
+            }
+            for (const [name, strings] of Object.entries(wanted)) {
+                if (strings.every(s => source.includes(s))) (candidates[name] ??= new Set()).add(m);
+            }
+            return false; // keep scanning
+        }, {searchExports: true});
+        const pick = (name, valid = () => true) => [...(candidates[name] ?? [])]
+            .sort((a, b) => String(a).length - String(b).length) // shortest first: the real helpers are tiny
+            .find(fn => {
+                try {
+                    return valid(fn);
+                } catch {
+                    return false;
+                }
+            });
+        // Several big components also mention these strings: keep the one that really builds a DisplayProfile.
+        // Only short functions are test-called, so no component or fetching code ever runs.
+        const isDisplayProfileFactory = fn => String(fn).length < 1000 && typeof this.displayProfilePrototype(fn)?.getBannerURL === "function";
+        const found = {
+            fetchProfile: pick("fetchProfile"),
+            saveProfile: pick("saveProfile"),
+            getDisplayProfile: pick("getDisplayProfile", isDisplayProfileFactory)
+        };
+        this.debug("candidates:", Object.fromEntries(Object.entries(candidates).map(([k, v]) => [k, v.size])));
         this.UserStore = Webpack.getStore("UserStore");
         this.ChannelStore = Webpack.getStore("ChannelStore");
         this.EmojiStore = Webpack.getStore("EmojiStore");
@@ -208,16 +260,23 @@ module.exports = class NitroPerks {
         this.MessageActions = byKeys("_sendMessage", "editMessage", "sendMessage");
         this.AvatarUtils = byKeys("getUserAvatarURL", "getGuildMemberAvatarURLSimple");
         this.Dispatcher = byKeys("dispatch", "subscribe", "unsubscribe", "isDispatching");
-        this.fetchProfile = byStrings("USER_PROFILE_FETCH_START", "USER_PROFILE_FETCH_SUCCESS");
-        this.saveProfile = byStrings("USER_PROFILE_UPDATE_START", "USER_PROFILE_UPDATE_SUCCESS");
-        this.getDisplayProfile = byStrings(".getUserProfile(", ".getGuildMemberProfile(", "arguments[2]");
+        this.fetchProfile = found.fetchProfile;
+        this.saveProfile = found.saveProfile;
+        this.getDisplayProfile = found.getDisplayProfile;
 
         const missing = ["UserStore", "ChannelStore", "MessageActions", "AvatarUtils"].filter(name => !this[name]);
         if (missing.length) this.toast(this.t("missing").replace("{0}", missing.join(", ")), "error");
 
         this.Dispatcher?.subscribe("USER_PROFILE_FETCH_SUCCESS", this.onProfileFetched);
         this.Dispatcher?.subscribe("USER_PROFILE_UPDATE_SUCCESS", this.onProfileUpdated);
-        this.applyPatches();
+        this.debug(`v${this.meta.version ?? "?"} started`, {
+            customBanner: this.settings.customBanner, bannerLink: isValidUrl(this.settings.bannerUrl),
+            clientsidePfp: this.settings.clientsidePfp, avatarLink: isValidUrl(this.settings.pfpUrl),
+            shareAvatar: this.settings.shareAvatar, showShared: this.settings.showShared,
+            UserProfileStore: !!this.UserProfileStore, fetchProfile: !!this.fetchProfile, saveProfile: !!this.saveProfile,
+            getDisplayProfile: !!this.getDisplayProfile, Dispatcher: !!this.Dispatcher
+        });
+        this.reapply();
     }
 
     stop() {
@@ -225,7 +284,9 @@ module.exports = class NitroPerks {
         this.Dispatcher?.unsubscribe("USER_PROFILE_UPDATE_SUCCESS", this.onProfileUpdated);
         clearTimeout(this.shareTimer);
         clearTimeout(this.cacheTimer);
+        Object.values(this.inputTimers ?? {}).forEach(clearTimeout);
         this.api.Patcher.unpatchAll();
+        this.removeDomPatches();
         this.restoreUser();
     }
 
@@ -240,9 +301,30 @@ module.exports = class NitroPerks {
 
     saveSettings() {
         this.api.Data.save("settings", this.settings);
-        this.api.Patcher.unpatchAll();
-        this.restoreUser();
-        this.applyPatches();
+        this.reapply();
+    }
+
+    // Never throws: one broken patch (Discord update) must not take down the rest of the plugin,
+    // and BetterDiscord only updates its inputs after our onChange returns.
+    reapply() {
+        try {
+            this.api.Patcher.unpatchAll();
+            this.removeDomPatches();
+            this.restoreUser();
+            this.applyPatches();
+        } catch (e) {
+            console.error("[NitroPerks] applying settings failed", e);
+        }
+    }
+
+    updateSetting(id, value) {
+        this.settings[id] = value;
+        this.saveSettings();
+        // Keep About Me in sync with what the user sees: sharing on/off, avatar/banner on/off or a new link.
+        const profileFields = ["clientsidePfp", "pfpUrl", "customBanner", "bannerUrl"];
+        if (id === "shareAvatar" || (this.settings.shareAvatar && profileFields.includes(id))) {
+            this.scheduleShareSync(id);
+        }
     }
 
     applyPatches() {
@@ -312,26 +394,104 @@ module.exports = class NitroPerks {
                 if (!proxy) {
                     proxy = new Proxy(profile, {get: (target, key, receiver) => key === "banner" ? BANNER_PLACEHOLDER : Reflect.get(target, key, receiver)});
                     this.bannerProxies.set(profile, proxy);
+                    this.debugOnce(`proxy:${userId}`, "banner placeholder for", this.who(userId));
                 }
                 return proxy;
             });
             const proto = this.displayProfilePrototype();
+            this.debug("banner patch:", {getDisplayProfile: typeof this.getDisplayProfile, prototype: !!proto, getBannerURL: typeof proto?.getBannerURL});
             if (proto?.getBannerURL) {
-                Patcher.after(proto, "getBannerURL", (profile, _, ret) => this.bannerFor(profile?.userId) ?? ret);
+                Patcher.after(proto, "getBannerURL", (profile, _, ret) => {
+                    const url = this.bannerFor(profile?.userId);
+                    this.debugOnce(`banner:${profile?.userId}:${url}`, "getBannerURL for", this.who(profile?.userId), "->", url ?? `(not ours) ${ret}`);
+                    return url ?? ret;
+                });
             }
+            this.installDomPatches();
         }
     }
 
+    // Safety net for the banner: if a URL built from our placeholder hash still reaches the page
+    // (cdn…/banners/<id>/nitroperks.png — exists only for banners we fake), swap in the real link
+    // where it lands: <img src>, src/style attributes and CSS background images.
+    installDomPatches() {
+        if (this.domRestores?.length || typeof window === "undefined" || typeof Element === "undefined") return;
+        this.domRestores = [];
+        const placeholder = new RegExp(`https?://[^"')\\s]+/banners/(\\d+)/${BANNER_PLACEHOLDER}\\.[a-z]+(\\?[^"')\\s]*)?`, "g");
+        const fix = value => {
+            if (typeof value !== "string" || !value.includes(`/${BANNER_PLACEHOLDER}.`)) return value;
+            return value.replace(placeholder, (match, userId) => {
+                const url = this.bannerFor(userId);
+                this.debugOnce(`dom:${userId}:${url}`, "DOM banner for", this.who(userId), "->", url ?? "(none)");
+                return url ?? match;
+            });
+        };
+        const wrapSetter = (proto, key) => {
+            const desc = proto && Object.getOwnPropertyDescriptor(proto, key);
+            if (!desc?.set || !desc.configurable) return;
+            Object.defineProperty(proto, key, {...desc, set(value) { desc.set.call(this, fix(value)); }});
+            this.domRestores.push(() => Object.defineProperty(proto, key, desc));
+        };
+        const wrapMethod = (proto, key, wrap) => {
+            const original = proto?.[key];
+            if (typeof original !== "function") return;
+            proto[key] = wrap(original);
+            this.domRestores.push(() => { proto[key] = original; });
+        };
+        wrapSetter(window.HTMLImageElement?.prototype, "src");
+        wrapSetter(window.HTMLImageElement?.prototype, "srcset");
+        // Newer Chromium keeps the CSS properties on CSSStyleProperties, older on CSSStyleDeclaration.
+        for (const proto of [window.CSSStyleProperties?.prototype, window.CSSStyleDeclaration?.prototype]) {
+            for (const key of ["backgroundImage", "background", "background-image"]) wrapSetter(proto, key);
+        }
+        wrapSetter(window.CSSStyleDeclaration?.prototype, "cssText");
+        wrapMethod(window.CSSStyleDeclaration?.prototype, "setProperty", original => function (name, value, ...rest) {
+            return original.call(this, name, fix(value), ...rest);
+        });
+        wrapMethod(Element.prototype, "setAttribute", original => function (name, value) {
+            return original.call(this, name, name === "src" || name === "srcset" || name === "style" ? fix(value) : value);
+        });
+        this.debug("DOM safety net:", {patched: this.domRestores.length, CSSStyleProperties: !!window.CSSStyleProperties});
+    }
+
+    removeDomPatches() {
+        (this.domRestores ?? []).splice(0).reverse().forEach(restore => {
+            try {
+                restore();
+            } catch {}
+        });
+    }
+
+    // --- diagnostics (go to Discord's renderer log) ---
+
+    debug(...args) {
+        // Discord's log writes objects as [object Object], so flatten them
+        console.info("[NitroPerks]", ...args.map(a => a && typeof a === "object" ? JSON.stringify(a) : a));
+    }
+
+    debugOnce(key, ...args) {
+        this.logged ??= new Set();
+        if (this.logged.has(key) || this.logged.size > 200) return;
+        this.logged.add(key);
+        this.debug(...args);
+    }
+
+    who(userId) {
+        return this.isMe(userId) ? "me" : userId ? "user …" + String(userId).slice(-4) : String(userId);
+    }
+
     // DisplayProfile isn't exported; getDisplayProfile(userId, guildId, [UserStore, UserProfileStore]) is.
-    displayProfilePrototype() {
+    // Called with stub stores it hands us an instance, i.e. the prototype to patch.
+    displayProfilePrototype(factory = this.getDisplayProfile) {
+        if (typeof factory !== "function") return null;
         try {
-            const sample = this.getDisplayProfile?.("0", null, [
+            const sample = factory("0", null, [
                 {getUser: () => ({})},
                 {getUserProfile: () => ({}), getGuildMemberProfile: () => null}
             ]);
-            return sample && Object.getPrototypeOf(sample);
-        } catch (e) {
-            console.error("[NitroPerks] DisplayProfile not found", e);
+            const proto = sample && typeof sample === "object" ? Object.getPrototypeOf(sample) : null;
+            return proto && proto !== Object.prototype ? proto : null;
+        } catch {
             return null;
         }
     }
@@ -499,11 +659,134 @@ module.exports = class NitroPerks {
         return content;
     }
 
+    // Link fields use our own <input> plus "Paste" / "Clear" buttons. In the settings modal Discord swallows
+    // keystrokes (typing and Backspace did nothing, only Ctrl+V worked), so the field edits itself:
+    // printable keys, Backspace and Delete are applied by hand with the browser default turned off.
+    // State is local, saving is debounced and can't block the field.
+    linkInput(id) {
+        const React = this.api.React ?? BdApi.React;
+        const plugin = this;
+        const h = React.createElement;
+        const stop = e => e.stopPropagation();
+        const buttonStyle = {
+            flex: "none", height: 32, padding: "0 12px", border: "none", borderRadius: 4, cursor: "pointer",
+            background: "var(--button-secondary-background, #4e5058)", color: "var(--white, #fff)", font: "inherit", fontSize: 14
+        };
+        const readClipboard = async () => {
+            try {
+                const text = window.DiscordNative?.clipboard?.read?.();
+                if (typeof text === "string") return text;
+            } catch {}
+            return navigator.clipboard?.readText?.() ?? "";
+        };
+
+        return function NitroPerksLinkInput() {
+            const [value, setValue] = React.useState(plugin.settings[id] ?? "");
+            const ref = React.useRef(null);
+            const caret = React.useRef(null);
+            React.useLayoutEffect?.(() => {
+                if (caret.current == null || !ref.current) return;
+                ref.current.setSelectionRange(caret.current, caret.current);
+                caret.current = null;
+            });
+
+            const commit = (next, cursor) => {
+                setValue(next);
+                if (cursor != null) caret.current = cursor;
+                clearTimeout(plugin.inputTimers?.[id]);
+                plugin.inputTimers = {...plugin.inputTimers, [id]: setTimeout(() => {
+                    try {
+                        plugin.updateSetting(id, next.trim());
+                    } catch (err) {
+                        console.error("[NitroPerks] saving", id, "failed", err);
+                    }
+                }, 400)};
+            };
+
+            const onKeyDown = e => {
+                e.stopPropagation();
+                if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+V/A/C/X work natively
+                const el = e.currentTarget;
+                const v = el.value, start = el.selectionStart ?? v.length, end = el.selectionEnd ?? start;
+                let next, cursor;
+                if (e.key === "Backspace") {
+                    if (start !== end) [next, cursor] = [v.slice(0, start) + v.slice(end), start];
+                    else if (start > 0) [next, cursor] = [v.slice(0, start - 1) + v.slice(start), start - 1];
+                    else return e.preventDefault();
+                } else if (e.key === "Delete") {
+                    if (start !== end) [next, cursor] = [v.slice(0, start) + v.slice(end), start];
+                    else [next, cursor] = [v.slice(0, start) + v.slice(start + 1), start];
+                } else if (e.key.length === 1) {
+                    [next, cursor] = [v.slice(0, start) + e.key + v.slice(end), start + 1];
+                } else {
+                    return; // arrows, Home/End, Tab… stay native
+                }
+                e.preventDefault();
+                commit(next, cursor);
+            };
+
+            // Try to load the link as an image and say whether it works (the usual mistake is a page link
+            // like imgur.com/abc instead of the image itself, i.imgur.com/abc.png).
+            const [check, setCheck] = React.useState(null);
+            React.useEffect(() => {
+                const link = value.trim();
+                if (!link) return setCheck(null);
+                if (!isValidUrl(link)) return setCheck({tone: "bad", text: plugin.t("notLink")});
+                setCheck({tone: "muted", text: plugin.t("checking")});
+                let alive = true;
+                const img = new Image();
+                // Signed Discord attachment links (…?ex=<hex unix time>&is=…&hm=…) die after about a day and are
+                // far too long to share through About Me.
+                const expires = /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\//.test(link) && new URL(link).searchParams.get("ex");
+                const expiry = expires ? new Date(parseInt(expires, 16) * 1000).toLocaleString() : null;
+                img.onload = () => alive && setCheck(expiry
+                    ? {tone: "warn", text: plugin.t("discordLink").replace("{0}", expiry)}
+                    : {tone: "ok", text: plugin.t("imageOk").replace("{0}", img.naturalWidth).replace("{1}", img.naturalHeight)});
+                img.onerror = () => alive && setCheck({tone: "bad", text: plugin.t("imageBad")});
+                const timer = setTimeout(() => { img.src = link; }, 400);
+                return () => { alive = false; clearTimeout(timer); };
+            }, [value]);
+            const toneColor = {ok: "var(--text-positive, #23a55a)", warn: "var(--text-warning, #f0b232)", bad: "var(--text-danger, #f23f43)", muted: "var(--text-muted, #949ba4)"};
+
+            return h("div", {style: {width: "100%"}},
+                h("div", {style: {display: "flex", gap: 8, alignItems: "center", width: "100%"}},
+                h("input", {
+                    ref,
+                    type: "text",
+                    className: "bd-text-input",
+                    style: {flex: 1, minWidth: 0},
+                    value,
+                    placeholder: "https://i.imgur.com/...",
+                    spellCheck: false,
+                    onChange: e => commit(e.currentTarget.value),
+                    onKeyDown,
+                    onKeyUp: stop,
+                    onKeyPress: stop,
+                    onPaste: stop
+                }),
+                h("button", {
+                    type: "button",
+                    style: buttonStyle,
+                    onClick: async () => commit(((await readClipboard()) ?? "").trim())
+                }, plugin.t("paste")),
+                h("button", {
+                    type: "button",
+                    style: buttonStyle,
+                    onClick: () => commit("", 0)
+                }, plugin.t("clear"))
+                ),
+                check && h("div", {style: {marginTop: 6, fontSize: 13, color: toneColor[check.tone]}}, check.text)
+            );
+        };
+    }
+
     getSettingsPanel() {
         const item = (type, id, extra = {}) => {
             const [name, note] = this.t(id);
             return {type, id, name, note, value: this.settings[id], ...extra};
         };
+        const React = this.api.React ?? BdApi.React;
+        const link = id => item("custom", id, {inline: false, children: React.createElement(this.linkInput(id))});
         return this.api.UI.buildSettingsPanel({
             settings: [
                 item("switch", "spoofNitro"),
@@ -511,19 +794,17 @@ module.exports = class NitroPerks {
                 item("dropdown", "emojiSize", {options: [32, 48, 64, 96, 128].map(n => ({label: `${n}px`, value: n}))}),
                 item("dropdown", "streamFps", {options: [{label: this.t("streamFpsDefault"), value: 0}, ...[90, 120, 144, 165, 240].map(n => ({label: `${n} fps`, value: n}))]}),
                 item("switch", "clientsidePfp"),
-                item("text", "pfpUrl", {placeholder: "https://i.imgur.com/..."}),
+                link("pfpUrl"),
                 item("switch", "customBanner"),
-                item("text", "bannerUrl", {placeholder: "https://i.imgur.com/..."}),
+                link("bannerUrl"),
                 item("switch", "shareAvatar"),
                 item("switch", "showShared")
             ],
             onChange: (_, id, value) => {
-                this.settings[id] = value;
-                this.saveSettings();
-                // Keep About Me in sync with what the user sees: sharing on/off, avatar/banner on/off or a new link.
-                const profileFields = ["clientsidePfp", "pfpUrl", "customBanner", "bannerUrl"];
-                if (id === "shareAvatar" || (this.settings.shareAvatar && profileFields.includes(id))) {
-                    this.scheduleShareSync(id);
+                try {
+                    this.updateSetting(id, value);
+                } catch (e) {
+                    console.error("[NitroPerks] saving", id, "failed", e);
                 }
             }
         });
