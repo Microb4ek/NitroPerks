@@ -2,7 +2,7 @@
 
 Unlock all screensharing modes, and use cross-server emotes & gif emotes, Discord wide! A [BetterDiscord](https://betterdiscord.app/) plugin.
 
-Fork of [oldhame/NitroPerks](https://github.com/oldhame/NitroPerks) by **lemons**, rewritten for the current Discord client and BetterDiscord 1.11+.
+Works with the current Discord client and BetterDiscord 1.11+.
 
 **[English](#english)** · **[Русский](#русский)**
 
@@ -127,10 +127,5 @@ Delete `NitroPerks.plugin.js` from the plugins folder. To remove BetterDiscord, 
 Удалите `NitroPerks.plugin.js` из папки плагинов. Чтобы удалить BetterDiscord, запустите его установщик и выберите **Uninstall**.
 
 ---
-
-## Credits
-
-- **lemons** — original [NitroPerks](https://github.com/oldhame/NitroPerks)
-- **Microb4ek** — 2.0 rewrite
 
 [MIT License](LICENSE)

@@ -1,6 +1,6 @@
 /**
  * @name NitroPerks
- * @author Microb4ek, lemons
+ * @author Microb4ek
  * @authorLink https://github.com/Microb4ek
  * @version 2.3.0
  * @description Unlock all screensharing modes, use cross-server emotes & gif emotes Discord wide, and share a custom avatar and profile banner with other NitroPerks users! (You CANNOT upload 100MB files though. :/)
