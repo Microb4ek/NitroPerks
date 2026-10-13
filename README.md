@@ -23,8 +23,9 @@ Fork of [oldhame/NitroPerks](https://github.com/oldhame/NitroPerks) by **lemons*
 | **Custom Profile Banner** | Shows any image or GIF as the background at the top of your profile, like a Nitro banner. Best in 5:2 proportions (e.g. 600×240). |
 | **Shared avatars & banners** | Turn on *Show my avatar and banner to other NitroPerks users* and everyone with the plugin sees your custom avatar and banner — no server needed. The links are stored as an invisible code in your **About Me**; people without the plugin see your normal profile and normal bio. Other users' avatars and banners appear once Discord loads their profile (open it or chat in DMs) and are remembered after that. |
 | **Stream FPS** *(experimental)* | When you pick 60 fps for a stream, sends 90 / 120 / 144 / 165 / 240 fps to the encoder instead. Restart the stream to apply. Discord's servers may still cap the stream at 60 — check the real FPS on the viewer's side. |
+| **Voice Bitrate** *(experimental)* | Sends your microphone at 96–510 kbps instead of the channel's bitrate (64 kbps in DMs and on servers without boosts) — in voice channels, DM calls and for your stream's sound. Applies right away, no reconnect needed. Above ~128 kbps the difference in voice is small. |
 
-If your account already has Nitro, the plugin doesn't change anything (except Stream FPS, which works for everyone).
+If your account already has Nitro, the plugin doesn't change anything (except Stream FPS and Voice Bitrate, which work for everyone).
 
 ### Installation
 
@@ -81,8 +82,9 @@ Delete `NitroPerks.plugin.js` from the plugins folder. To remove BetterDiscord, 
 | **Свой баннер профиля** | Показывает любую картинку или GIF фоном в шапке профиля, как баннер Nitro. Лучше в пропорциях 5:2 (например, 600×240). |
 | **Общие аватарки и баннеры** | Включите *Показывать мою аватарку и баннер пользователям NitroPerks*, и их увидят все, у кого стоит плагин, без всякого сервера. Ссылки хранятся невидимым кодом в **«Обо мне»**: без плагина виден обычный профиль и обычное описание. Аватарки и баннеры других людей появляются, когда Discord один раз загрузит их профиль (откройте его или напишите в ЛС), и дальше запоминаются. |
 | **Stream FPS** *(экспериментально)* | Когда вы выбираете для стрима 60 fps, кодировщик вместо этого получает 90 / 120 / 144 / 165 / 240 fps. Чтобы применить, перезапустите стрим. Серверы Discord могут всё равно ограничить стрим до 60 — проверяйте реальную частоту кадров у зрителя. |
+| **Битрейт голоса** *(экспериментально)* | Микрофон отправляется с битрейтом 96–510 кбит/с вместо битрейта канала (64 кбит/с в ЛС и на серверах без бустов) — в голосовых каналах, личных звонках и для звука вашего стрима. Применяется сразу, переподключаться не нужно. Выше ~128 кбит/с разница в голосе уже небольшая. |
 
-Если у аккаунта уже есть Nitro, плагин ничего не меняет (кроме Stream FPS — эта функция работает у всех).
+Если у аккаунта уже есть Nitro, плагин ничего не меняет (кроме Stream FPS и битрейта голоса — эти функции работают у всех).
 
 ### Установка
 

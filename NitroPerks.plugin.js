@@ -2,7 +2,7 @@
  * @name NitroPerks
  * @author Microb4ek, lemons
  * @authorLink https://github.com/Microb4ek
- * @version 2.2.1
+ * @version 2.3.0
  * @description Unlock all screensharing modes, use cross-server emotes & gif emotes Discord wide, and share a custom avatar and profile banner with other NitroPerks users! (You CANNOT upload 100MB files though. :/)
  * @website https://github.com/Microb4ek/NitroPerks
  * @source https://raw.githubusercontent.com/Microb4ek/NitroPerks/main/NitroPerks.plugin.js
@@ -51,9 +51,14 @@
 //  * Experimental stream FPS: Discord's picker stops at 60, but the native connection's setGoLiveSource
 //    passes quality.frameRate straight to the encoder (setDesktopEncodingOptions) and to the stream's
 //    maxFrameRate, so we swap 60 for the chosen value there. The media server may still cap it.
+//  * Voice bitrate: every connection (voice channel, DM call, Go Live stream) gets setBitRate(channel bitrate)
+//    on connect and on SET_CHANNEL_BITRATE; the native one forwards it as encodingVoiceBitRate to the Opus
+//    encoder (the stream's sound uses max(soundshare minimum, that value)). Same prototype trick as stream FPS:
+//    we swap the argument, and re-send it on live connections so a change applies without reconnecting.
 
 const PREMIUM_TIER_2 = 2;
 const PICKER_MAX_FPS = 60;
+const DEFAULT_VOICE_BITRATE = 64000; // Discord's own default (DMs, unboosted servers)
 
 const DEFAULT_SETTINGS = {
     spoofNitro: true,
@@ -65,7 +70,8 @@ const DEFAULT_SETTINGS = {
     bannerUrl: "",
     shareAvatar: false,
     showShared: true,
-    streamFps: 0 // 0 = leave Discord's value
+    streamFps: 0, // 0 = leave Discord's value
+    voiceBitrate: 0 // kbps, 0 = leave Discord's value
 };
 
 const isValidUrl = value => {
@@ -139,6 +145,8 @@ const STRINGS = {
         emojiSize: ["Emote Size", "Size of the linked emote image."],
         streamFps: ["Stream FPS (experimental)", "Replaces 60 fps when you pick 60 in the stream settings. Restart the stream to apply. Discord's servers may still cap it at 60."],
         streamFpsDefault: "Discord default",
+        voiceBitrate: ["Voice Bitrate (experimental)", "Bitrate of your microphone in voice channels, DM calls and of your stream's sound. Discord normally sends 64 kbps (DMs, servers without boosts). Applies right away. Above ~128 kbps the difference in voice is small."],
+        voiceBitrateDefault: "Discord default",
         clientsidePfp: ["Custom Avatar", "Replaces your avatar with the image below."],
         pfpUrl: ["Avatar Link", "Direct http(s) link to an image or GIF, e.g. https://i.imgur.com/abc.gif. Short links leave more room in your About Me."],
         customBanner: ["Custom Profile Banner", "Shows the image below as the background at the top of your profile."],
@@ -161,7 +169,7 @@ const STRINGS = {
         notLink: "✗ This is not a link. It should start with https://",
         discordLink: "⚠ The image loads, but this is a Discord attachment link: it stops working on {0} and is too long to share with other users. Upload the image to imgur.com and use the direct link (i.imgur.com/….gif).",
         missing: "NitroPerks: Discord modules not found ({0}), some features are off.",
-        noEngine: "NitroPerks: media engine not found, custom stream FPS is off."
+        noEngine: "NitroPerks: media engine not found, custom stream FPS and voice bitrate are off."
     },
     ru: {
         spoofNitro: ["Подмена Nitro", "Открывает стрим 1080p/исходное качество и 60 fps, а также выбор любых эмодзи. Нужна для обхода эмодзи."],
@@ -169,6 +177,8 @@ const STRINGS = {
         emojiSize: ["Размер эмодзи", "Размер картинки эмодзи в сообщении."],
         streamFps: ["Частота кадров стрима (эксперимент)", "Заменяет 60 fps, когда вы выбираете 60 в настройках стрима. Чтобы применить, перезапустите стрим. Серверы Discord могут всё равно ограничить до 60."],
         streamFpsDefault: "Как в Discord",
+        voiceBitrate: ["Битрейт голоса (эксперимент)", "Битрейт вашего микрофона в голосовых каналах, личных звонках и звука вашего стрима. Обычно Discord отправляет 64 кбит/с (ЛС, серверы без бустов). Применяется сразу. Выше ~128 кбит/с разница в голосе уже небольшая."],
+        voiceBitrateDefault: "Как в Discord",
         clientsidePfp: ["Своя аватарка", "Заменяет вашу аватарку на картинку по ссылке ниже."],
         pfpUrl: ["Ссылка на аватарку", "Прямая ссылка на картинку или GIF, например https://i.imgur.com/abc.gif. Чем короче ссылка, тем больше места останется в «Обо мне»."],
         customBanner: ["Свой баннер профиля", "Показывает картинку по ссылке ниже фоном в шапке вашего профиля."],
@@ -191,7 +201,7 @@ const STRINGS = {
         notLink: "✗ Это не ссылка. Она должна начинаться с https://",
         discordLink: "⚠ Картинка загружается, но это ссылка на вложение Discord: она перестанет работать {0} и слишком длинная, чтобы поделиться ею с другими. Загрузите картинку на imgur.com и возьмите прямую ссылку (i.imgur.com/….gif).",
         missing: "NitroPerks: не найдены модули Discord ({0}), часть функций отключена.",
-        noEngine: "NitroPerks: не найден медиадвижок, своя частота кадров стрима отключена."
+        noEngine: "NitroPerks: не найден медиадвижок, своя частота кадров стрима и битрейт голоса отключены."
     }
 };
 
@@ -201,6 +211,7 @@ module.exports = class NitroPerks {
         this.api = new BdApi(meta.name);
         this.spoofed = new WeakSet();
         this.real = null; // {premiumType, perks} of the account before spoofing
+        this.originalBitrates = new WeakMap(); // connection -> bitrate Discord asked for
         this.onProfileFetched = this.onProfileFetched.bind(this);
         this.onProfileUpdated = this.onProfileUpdated.bind(this);
     }
@@ -288,6 +299,7 @@ module.exports = class NitroPerks {
         this.api.Patcher.unpatchAll();
         this.removeDomPatches();
         this.restoreUser();
+        this.restoreBitrates();
     }
 
     t(key) {
@@ -339,10 +351,10 @@ module.exports = class NitroPerks {
             }
         }
 
-        if (this.settings.streamFps > 0) {
+        if (this.settings.streamFps > 0 || this.settings.voiceBitrate > 0) {
             // The connection class isn't exported: patch its prototype through the engine instead,
             // on connections that already exist and on every new one from engine.connect().
-            const engine = this.MediaEngineStore?.getMediaEngine?.();
+            const engine = this.mediaEngine();
             if (engine?.connect) {
                 this.patchedConnections = new WeakSet();
                 engine.eachConnection?.(conn => this.patchConnection(conn));
@@ -351,6 +363,7 @@ module.exports = class NitroPerks {
                 this.toast(this.t("noEngine"), "error");
             }
         }
+        if (!(this.settings.voiceBitrate > 0)) this.restoreBitrates();
 
         if (this.settings.emojiBypass && this.MessageActions) {
             // _sendMessage(channelId, {content, validNonShortcutEmojis, invalidEmojis, tts}, options)
@@ -592,15 +605,59 @@ module.exports = class NitroPerks {
 
     // --- stream fps ---
 
+    mediaEngine() {
+        try {
+            return this.MediaEngineStore?.getMediaEngine?.();
+        } catch {
+            return null;
+        }
+    }
+
     patchConnection(conn) {
         const proto = conn && Object.getPrototypeOf(conn);
-        if (!proto || typeof proto.setGoLiveSource !== "function" || this.patchedConnections.has(proto)) return;
-        this.patchedConnections.add(proto);
-        // setGoLiveSource({desktopDescription | cameraDescription, quality: {resolution, frameRate}})
-        this.api.Patcher.before(proto, "setGoLiveSource", (_, args) => {
-            const quality = args[0]?.quality;
-            if (quality?.frameRate !== PICKER_MAX_FPS) return; // only when 60 was picked
-            args[0] = {...args[0], quality: {...quality, frameRate: this.settings.streamFps}};
+        if (!proto) return;
+        if (!this.patchedConnections.has(proto)) {
+            this.patchedConnections.add(proto);
+            if (this.settings.streamFps > 0 && typeof proto.setGoLiveSource === "function") {
+                // setGoLiveSource({desktopDescription | cameraDescription, quality: {resolution, frameRate}})
+                this.api.Patcher.before(proto, "setGoLiveSource", (_, args) => {
+                    const quality = args[0]?.quality;
+                    if (quality?.frameRate !== PICKER_MAX_FPS) return; // only when 60 was picked
+                    args[0] = {...args[0], quality: {...quality, frameRate: this.settings.streamFps}};
+                });
+            }
+            if (this.settings.voiceBitrate > 0 && typeof proto.setBitRate === "function") {
+                // setBitRate(bps): the channel's bitrate, on connect and whenever it changes
+                this.api.Patcher.before(proto, "setBitRate", (that, args) => {
+                    if (!this.ownBitrateCall) this.originalBitrates.set(that, args[0]);
+                    args[0] = this.settings.voiceBitrate * 1000;
+                });
+            }
+        }
+        if (this.settings.voiceBitrate > 0 && typeof conn.setBitRate === "function") {
+            // Connections that existed before the plugin: what they run with now is Discord's value.
+            if (!this.originalBitrates.has(conn) && typeof conn.voiceBitrate === "number") this.originalBitrates.set(conn, conn.voiceBitrate);
+            this.setBitRate(conn, this.originalBitrates.get(conn) ?? DEFAULT_VOICE_BITRATE); // the patch swaps it
+        }
+    }
+
+    setBitRate(conn, bitrate) {
+        this.ownBitrateCall = true;
+        try {
+            conn.setBitRate(bitrate);
+        } catch (e) {
+            console.error("[NitroPerks] setBitRate failed", e);
+        } finally {
+            this.ownBitrateCall = false;
+        }
+    }
+
+    // Back to the channel's bitrate on live connections (call only while setBitRate isn't patched).
+    restoreBitrates() {
+        this.mediaEngine()?.eachConnection?.(conn => {
+            const original = this.originalBitrates.get(conn);
+            if (original != null && conn.voiceBitrate !== original) this.setBitRate(conn, original);
+            this.originalBitrates.delete(conn); // unpatched from now on: Discord's later changes land in conn.voiceBitrate
         });
     }
 
@@ -793,6 +850,7 @@ module.exports = class NitroPerks {
                 item("switch", "emojiBypass"),
                 item("dropdown", "emojiSize", {options: [32, 48, 64, 96, 128].map(n => ({label: `${n}px`, value: n}))}),
                 item("dropdown", "streamFps", {options: [{label: this.t("streamFpsDefault"), value: 0}, ...[90, 120, 144, 165, 240].map(n => ({label: `${n} fps`, value: n}))]}),
+                item("dropdown", "voiceBitrate", {options: [{label: this.t("voiceBitrateDefault"), value: 0}, ...[96, 128, 192, 256, 384, 510].map(n => ({label: `${n} kbps`, value: n}))]}),
                 item("switch", "clientsidePfp"),
                 link("pfpUrl"),
                 item("switch", "customBanner"),
